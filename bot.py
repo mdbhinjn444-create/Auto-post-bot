@@ -1,4 +1,5 @@
 import os
+import asyncio
 from telegram import Update
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -12,7 +13,6 @@ channels = []
 members = set()
 user_states = {}
 
-# Track sent messages for deletion: { channel_index: [(message_id, text), ...] }
 sent_log = {}
 
 
@@ -29,7 +29,6 @@ def has_access(user_id):
 
 
 def parse_selection(text, total):
-    """Parse user input like '1,2,3' or 'All' into a list of 0-based indices."""
     text = text.strip()
     if text.lower() == "all":
         return list(range(total))
@@ -51,8 +50,6 @@ def channel_list_text():
         lines.append(f"{i}. {ch}")
     return "\n".join(lines)
 
-
-# ─────────────────────────── COMMANDS ───────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -135,15 +132,12 @@ async def removepost_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_states[user_id] = {"state": "waiting_channel_selection_remove"}
 
 
-# ─────────────────────────── MESSAGE HANDLER ───────────────────────────
-
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     state_info = user_states.get(user_id, {})
     state = state_info.get("state")
     text = update.message.text.strip()
 
-    # ── Password for /add ──
     if state == "waiting_password_for_add":
         if text != PASSWORD:
             await update.message.reply_text("Password incorrect ❌")
@@ -153,7 +147,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Boss, submit Telegram ID:")
         return
 
-    # ── Password for /ban ──
     if state == "waiting_password_for_ban":
         if text != PASSWORD:
             await update.message.reply_text("Password incorrect ❌")
@@ -163,7 +156,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Submit Telegram ID to ban:")
         return
 
-    # ── Add / Ban target ID ──
     if state == "waiting_target_id":
         try:
             target_id = int(text)
@@ -180,7 +172,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states.pop(user_id, None)
         return
 
-    # ── Add channel ──
     if state == "waiting_channel_id":
         if text not in channels:
             channels.append(text)
@@ -191,7 +182,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states.pop(user_id, None)
         return
 
-    # ── Post: waiting for content ──
     if state == "waiting_post":
         if not channels:
             await update.message.reply_text(
@@ -207,7 +197,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ── Post: channel selection ──
     if state == "waiting_channel_selection_post":
         indices = parse_selection(text, len(channels))
         if not indices:
@@ -235,7 +224,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states.pop(user_id, None)
         return
 
-    # ── Remove post: channel selection ──
     if state == "waiting_channel_selection_remove":
         indices = parse_selection(text, len(channels))
         if not indices:
@@ -252,7 +240,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ── Remove post: match and delete ──
     if state == "waiting_delete_text":
         target_text = text
         del_indices = state_info["del_indices"]
@@ -287,16 +274,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_states.pop(user_id, None)
         return
 
-    # ── Block non-members ──
     if not has_access(user_id):
         await update.message.reply_text(
             "You do not have access. You can only use /start and /add."
         )
 
 
-# ─────────────────────────── MAIN ───────────────────────────
-
-def main():
+async def run_bot():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -309,8 +293,13 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     print("Bot is starting...")
-    app.run_polling(drop_pending_updates=True)
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(drop_pending_updates=True)
+    await app.updater.idle()
+    await app.stop()
+    await app.shutdown()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(run_bot())
